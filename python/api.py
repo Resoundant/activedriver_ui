@@ -1,12 +1,26 @@
 """Active Driver API commands shared by transport implementations."""
 
+from abc import ABC, abstractmethod
 import re
 import socket
 import time
 
 
-class ActiveDriverApi:
+class ActiveDriverApi(ABC):
     """Device commands using the transport's _command and QueryValue methods."""
+
+    ip: str
+    port: int
+
+    @abstractmethod
+    def _command(self, cmd: str) -> str:
+        """Send a command through the transport and return its response."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def QueryValue(self, cmd: str, timeout_s: float = 0.5) -> list[str]:
+        """Query the transport and return its response messages."""
+        raise NotImplementedError
 
     # Setting Profile Information
 

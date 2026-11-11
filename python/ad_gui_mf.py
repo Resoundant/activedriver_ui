@@ -9,6 +9,15 @@ import math
 from fractions import Fraction
 import tkinter as tk
 from tkinter import ttk
+from udp import ActiveDriverUdp, find_adapter_for_ip
+
+def get_ad_version(ad_ip, ad_port, host_port) -> str:
+    _, host_ip, _ = find_adapter_for_ip(ad_ip)
+    if host_ip is None:
+        return "AD_NOT_FOUND"
+
+    with ActiveDriverUdp(ad_ip=ad_ip, ad_port=ad_port, host_ip=host_ip, host_port=host_port) as ad:
+        return ad.QueryVersion_smart()
 
 
 def frequency_gcd(frequencies):
