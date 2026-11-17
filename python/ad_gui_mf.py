@@ -8,10 +8,10 @@ This code was majority writted by AI.  It may not read well.
 import math
 from fractions import Fraction
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, ttk
 from udp import ActiveDriverUdp, find_adapter_for_ip
 
-def get_ad_version(ad_ip, ad_port, host_port) -> str:
+def ad_get_version(ad_ip, ad_port, host_port) -> str:
     _, host_ip, _ = find_adapter_for_ip(ad_ip)
     if host_ip is None:
         return "AD_NOT_FOUND"
@@ -61,7 +61,7 @@ def acoustic_waveform(components, *, period=None):
     return period, samples
 
 
-def meg_waveform(amplitude, frequency, slew_rate, *, waveform_type="11",
+def meg_waveform(amplitude, frequency, slew_rate, *, waveform_type="121",
                  lobes=1, period=None):
     """Sample a slew-limited MEG of type 121 or 11 in mT/m.
 
@@ -113,25 +113,34 @@ def normalize_waveform(components, samples):
 
 def calculate_menc(normalized_amplitude, frequency, gain, period,
                    meg_samples):
-    """Integrate the scaled acoustic component times physical MEG (mT/m).
+    """Return the magnitude of the integrated acoustic quadratures times MEG.
 
     Physical MEG already includes its amplitude: normalized MEG * amplitude.
     Both waveforms use the same 1024-point grid over the plotted interval.
     """
     if not math.isfinite(gain):
         raise ValueError("Gain must be a finite number")
+    amplitude = normalized_amplitude * gain
     _, samples = acoustic_waveform(
-        [(normalized_amplitude * gain, frequency)], period=period)
+        [(amplitude, frequency)], period=period)
     products = []
-    for (time, value), (meg_time, meg_value) in zip(samples, meg_samples, strict=True):
+    for (time, sine_value), (meg_time, meg_value) in zip(samples, meg_samples, strict=True):
         if time != meg_time:
             raise ValueError("MENC waveforms must use the same time grid")
-        product = value * meg_value
-        if not math.isfinite(product):
+        cosine_value = (amplitude * math.cos(math.tau * (frequency * time))
+                        if frequency > 0 else 0.0)
+        sine_product = sine_value * meg_value
+        cosine_product = cosine_value * meg_value
+        if not all(math.isfinite(value) for value in (sine_product, cosine_product)):
             raise ValueError("MENC integrand must be finite")
-        products.append((time, product))
-    integral = math.fsum((t1 - t0) * (v0 / 2 + v1 / 2)
-                         for (t0, v0), (t1, v1) in zip(products, products[1:]))
+        products.append((time, sine_product, cosine_product))
+    sine_integral = math.fsum(
+        (t1 - t0) * (s0 / 2 + s1 / 2)
+        for (t0, s0, _), (t1, s1, _) in zip(products, products[1:]))
+    cosine_integral = math.fsum(
+        (t1 - t0) * (c0 / 2 + c1 / 2)
+        for (t0, _, c0), (t1, _, c1) in zip(products, products[1:]))
+    integral = math.hypot(sine_integral, cosine_integral)
     if not math.isfinite(integral):
         raise ValueError("MENC integral is too large")
     return integral
@@ -144,6 +153,23 @@ def trigger_timing(frequency):
     period_ms = Fraction(1000) / Fraction(str(frequency))
     return period_ms.denominator, period_ms.numerator
 
+
+def download_waveform(ad:ActiveDriverUdp, samples):
+    response = ad.SetWaveformType(1)
+    if response != "OK,":
+        print(response)
+        return False
+
+    for index, (_, waveform_value) in enumerate(samples):
+        response = ad._command(f"+m{index}")
+        if response != "OK,":
+            print(response)
+            return False
+        response = ad._command(f"*m{waveform_value}")
+        if response != "OK,":
+            print(response)
+            return False
+    return True
 
 class ActiveDriverMultiFrequencyGui:
     def __init__(self, root):
@@ -168,6 +194,12 @@ class ActiveDriverMultiFrequencyGui:
                 ttk.Entry(frame, textvariable=value, width=20).grid(
                     row=row, column=column * 2 + 1, sticky="ew", padx=(0, 12), pady=4)
 
+        self.ad_version = tk.StringVar()
+        ttk.Label(frame, textvariable=self.ad_version, wraplength=180).grid(
+            row=0, column=4, padx=(8, 0), pady=4)
+        self.test_button = ttk.Button(frame, text="TEST", command=self.test_connection)
+        self.test_button.grid(row=1, column=4, padx=(8, 0), pady=4)
+
         components_frame = ttk.LabelFrame(frame, text="Sine-wave components", padding=8)
         components_frame.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(8, 12))
         components_frame.columnconfigure(1, weight=1)
@@ -189,7 +221,7 @@ class ActiveDriverMultiFrequencyGui:
                 meg_label = ttk.Frame(components_frame)
                 meg_label.grid(row=row, column=0, padx=8)
                 ttk.Label(meg_label, text="MEG").grid(row=0, column=0)
-                self.meg_type = tk.StringVar(value="11")
+                self.meg_type = tk.StringVar(value="121")
                 ttk.Combobox(meg_label, textvariable=self.meg_type,
                              values=("121", "11"), state="readonly", width=4).grid(
                                  row=0, column=1, padx=(4, 0))
@@ -263,6 +295,15 @@ class ActiveDriverMultiFrequencyGui:
         self.canvas = tk.Canvas(frame, width=680, height=320, background="white",
                                 highlightthickness=1, highlightbackground="#aaaaaa")
         self.canvas.grid(row=4, column=0, columnspan=4, sticky="nsew")
+        plot_actions = ttk.Frame(frame)
+        plot_actions.grid(row=4, column=4, sticky="n", padx=(8, 0))
+        self.download_button = ttk.Button(
+            plot_actions, text="DOWNLOAD", command=self.download_current_waveform)
+        self.download_button.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self.txt_button = ttk.Button(
+            plot_actions, text="TXT", command=self.save_waveform)
+        self.txt_button.grid(row=1, column=0, sticky="ew")
+        self.waveform_samples = []
         self.status = tk.StringVar()
         ttk.Label(frame, textvariable=self.status, wraplength=680).grid(
             row=5, column=0, columnspan=4, sticky="w", pady=(8, 0))
@@ -277,7 +318,71 @@ class ActiveDriverMultiFrequencyGui:
             value.trace_add("write", self.update_plot)
         self.update_plot()
 
+    def test_connection(self):
+        self.ad_version.set("Testing...")
+        self.test_button.state(["disabled"])
+        self.test_button.update_idletasks()
+        try:
+            ad_ip = self.fields["ad_ip"].get().strip()
+            ad_port = int(self.fields["ad_port"].get())
+            host_port = int(self.fields["host_port"].get())
+            if not 1 <= ad_port <= 65535 or not 1 <= host_port <= 65535:
+                raise ValueError("Ports must be between 1 and 65535")
+            version = ad_get_version(ad_ip, ad_port, host_port)
+            self.ad_version.set(f"Version: {version}")
+        except (ValueError, OSError, RuntimeError) as exc:
+            self.ad_version.set(f"Test failed: {exc}")
+        finally:
+            self.test_button.state(["!disabled"])
+
+    def download_current_waveform(self):
+        if not self.waveform_samples:
+            return
+        self.download_button.state(["disabled"])
+        self.status.set("Downloading waveform...")
+        self.download_button.update_idletasks()
+        try:
+            ad_ip = self.fields["ad_ip"].get().strip()
+            ad_port = int(self.fields["ad_port"].get())
+            host_port = int(self.fields["host_port"].get())
+            if not 1 <= ad_port <= 65535 or not 1 <= host_port <= 65535:
+                raise ValueError("Ports must be between 1 and 65535")
+            host_ip = self.fields["host_ip"].get().strip()
+            if not host_ip:
+                _, host_ip, _ = find_adapter_for_ip(ad_ip)
+                if host_ip is None:
+                    raise ValueError("No local adapter found for the driver IP")
+            with ActiveDriverUdp(ad_ip=ad_ip, ad_port=ad_port,
+                                 host_ip=host_ip, host_port=host_port) as ad:
+                succeeded = download_waveform(ad, self.waveform_samples)
+            self.status.set("Waveform downloaded." if succeeded else
+                            "Download stopped: unexpected response (see console).")
+        except (ValueError, OSError, RuntimeError) as exc:
+            self.status.set(f"Download failed: {exc}")
+        finally:
+            self.download_button.state(["!disabled"])
+
+    def save_waveform(self):
+        if not self.waveform_samples:
+            return
+        filename = filedialog.asksaveasfilename(
+            parent=self.canvas.winfo_toplevel(), title="Save waveform samples",
+            defaultextension=".txt", initialfile="waveform.txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
+        if not filename:
+            return
+        try:
+            with open(filename, "w", encoding="utf-8") as output:
+                output.writelines(f"{value:.7f}\n"
+                                  for _, value in self.waveform_samples)
+            self.status.set(f"Waveform saved to {filename}")
+        except OSError as exc:
+            self.status.set(f"Save failed: {exc}")
+
     def update_plot(self, *_):
+        self.waveform_samples = []
+        self.download_button.state(["disabled"])
+        self.txt_button.state(["disabled"])
         self.canvas.delete("all")
         self.gcd_frequency.set("")
         self.duration.set("")
@@ -333,6 +438,9 @@ class ActiveDriverMultiFrequencyGui:
                             f"and a positive whole number of MEG lobes. {exc}")
             return
 
+        self.waveform_samples = samples
+        self.download_button.state(["!disabled"])
+        self.txt_button.state(["!disabled"])
         width = max(self.canvas.winfo_width(), 200)
         height = max(self.canvas.winfo_height(), 160)
         left, top, right, bottom = 70, 30, width - 20, height - 50

@@ -94,6 +94,9 @@ class ActiveDriverApi(ABC):
     def Logout(self) -> str:
         return self._command('*L')
 
+    def QueryVersoion(self):
+        return self.QueryVersion_smart()
+
     def QueryVersion_legacy(self) -> str:
         """Return the full legacy version banner using ?v."""
         return self.QueryValue("?v")[0]
