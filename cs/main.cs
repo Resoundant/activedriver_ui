@@ -10,9 +10,9 @@ internal static class Program
     {
         try
         {
-            string? command = null;
+            string command = null;
             string adIp = "10.0.1.30";
-            string? hostIp = null;
+            string hostIp = null;
             int adPort = 2000;
             int hostPort = 2000;
             double timeout = 0.2;
@@ -76,7 +76,7 @@ internal static class Program
                     throw new ArgumentException("Commands must contain only ASCII characters");
 
             IPAddress deviceAddress = ParseAddress(adIp, "--ad-ip");
-            IPAddress? localAddress = hostIp == null ? ActiveDriverUdp.FindAdapterAddress(deviceAddress) : ParseAddress(hostIp, "--host-ip");
+            IPAddress localAddress = hostIp == null ? ActiveDriverUdp.FindAdapterAddress(deviceAddress) : ParseAddress(hostIp, "--host-ip");
             if (localAddress == null)
                 throw new ArgumentException("No network adapter found for " + adIp + "; specify --host-ip");
 
@@ -112,7 +112,7 @@ internal static class Program
 
     private static IPAddress ParseAddress(string value, string option)
     {
-        IPAddress? address;
+        IPAddress address;
         if (!IPAddress.TryParse(value, out address) || address.AddressFamily != AddressFamily.InterNetwork)
             throw new ArgumentException(option + " must be an IPv4 address");
         return address;

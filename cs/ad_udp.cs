@@ -37,11 +37,14 @@
 
 
 
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 
 
 public sealed class ActiveDriverUdp : IDisposable
@@ -52,7 +55,7 @@ public sealed class ActiveDriverUdp : IDisposable
     private readonly object sync = new object();
     private readonly List<string> messages = new List<string>();
     private bool closed;
-    private Exception? receiveError;
+    private Exception receiveError;
 
     public ActiveDriverUdp(IPAddress deviceAddress, int devicePort, IPAddress localAddress, int localPort)
     {
@@ -86,7 +89,7 @@ public sealed class ActiveDriverUdp : IDisposable
         }
     }
 
-    public static IPAddress? FindAdapterAddress(IPAddress target)
+    public static IPAddress FindAdapterAddress(IPAddress target)
     {
         // Find the network adaptor that would connect to the provided target (active driver IP)
         // Return null if no match
