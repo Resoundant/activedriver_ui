@@ -45,7 +45,7 @@ ad_cli <command> [--ad-ip IP] [--ad-port PORT] [--host-ip IP] [--host-port PORT]
 | `--ad-ip` | `10.0.1.30` | Active Driver IPv4 address. |
 | `--ad-port` | `2000` | Device UDP destination port. |
 | `--host-ip` | Automatic | Local IPv4 address to receive responses on; automatically selects the first adapter address on the device's subnet. |
-| `--host-port` | `2000` | Local UDP receive port. *This must match the active driver "UDP output" port* |
+| `--host-port` | `2000` | Local UDP receive port; nonzero values must match the active driver "UDP output" port. Use `0` for inline receiving on the sending socket's OS-assigned port, without a listener thread. |
 | `--timeout` | `0.2` | Positive, finite wait in seconds for each response batch. |
 | `--help`, `-h` | | Print usage and exit without contacting the device. |
 
@@ -69,6 +69,14 @@ Before sending your command, the tool's UDP client sends `?v` and waits up to
 0.5 seconds for an initialization response. This response is consumed internally.
 The `--timeout` option does not change that initialization wait.
 
+With `--host-port 0`, the same socket sends commands and receives replies.
+The OS assigns a local port on the selected adapter; the device must reply to
+that source port. `GetUdpResponse()` receives synchronously on the calling
+thread, waiting up to the timeout for a packet and returning it along with any
+other immediately available packets. No background listener is started.
+Call `Send()` followed by `GetUdpResponse()` sequentially in this mode.
+For example: `.\ad_cli.exe '?V' --host-port 0`.
+
 Exit codes are `0` for normal completion, `2` for argument errors, and `1` for
 other failures. Errors are written to standard error. A timeout after sending
 the requested command ends normally, so exit code `0` does not confirm that
@@ -84,10 +92,10 @@ The file includes all required `using` statements. Reference values can be
 | Member | Behavior |
 | --- | --- |
 | `FindAdapterAddress(IPAddress target)` | Returns the first local IPv4 address whose subnet matches the target - the active driver IP - or `null` if none matches. |
-| `ActiveDriverUdp(deviceAddress, devicePort, localAddress, localPort)` | Binds the receive socket, starts a background listener, and checks communication with `?v`. Throws `InvalidOperationException` if initialization fails; inspect `InnerException` for the cause. |
+| `ActiveDriverUdp(deviceAddress, devicePort, localAddress, localPort)` | Binds the socket and checks communication with `?v`. Nonzero local ports start a background listener; `0` selects inline receiving on an OS-assigned port. Throws `InvalidOperationException` if initialization fails; inspect `InnerException` for the cause. |
 | `Send(string command)` | Clears queued responses and sends the command using ASCII encoding. Drain responses before sending another command. |
 | `GetUdpResponse(double timeoutSeconds)` | Returns and removes the currently queued responses as a `List<string>`, waiting up to the supplied timeout if no responses are received. Returns an empty list on timeout; throws if the receiver is closed and no messages remain. |
-| `Dispose()` | Closes the receive socket, clears queued responses, and joins the listener thread. Use a `using` block to ensure cleanup. |
+| `Dispose()` | Closes the receive socket, clears queued responses, and joins the listener thread if present. Use a `using` block to ensure cleanup. |
 
 This example can be used as a separate application's entry point with
 `ad_udp.cs` included in that project:

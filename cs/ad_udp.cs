@@ -52,6 +52,7 @@ public sealed class ActiveDriverUdp : IDisposable
     private readonly UdpClient receiver;
     private readonly IPEndPoint destination;
     private readonly Thread listener;
+    private readonly bool inlineReceive;
     private readonly object sync = new object();
     private readonly List<string> messages = new List<string>();
     private bool closed;
@@ -60,13 +61,17 @@ public sealed class ActiveDriverUdp : IDisposable
     public ActiveDriverUdp(IPAddress deviceAddress, int devicePort, IPAddress localAddress, int localPort)
     {
         destination = new IPEndPoint(deviceAddress, devicePort);
+        inlineReceive = localPort == 0;
         receiver = new UdpClient(AddressFamily.InterNetwork);
         try
         {
             receiver.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             receiver.Client.Bind(new IPEndPoint(localAddress, localPort));
-            listener = new Thread(Receive) { IsBackground = true };
-            listener.Start();
+            if (!inlineReceive)
+            {
+                listener = new Thread(Receive) { IsBackground = true };
+                listener.Start();
+            }
             // Send version query as a litmus of active connection
             Send("?v");
             List<string> version = GetUdpResponse(0.5);
@@ -152,12 +157,25 @@ public sealed class ActiveDriverUdp : IDisposable
             messages.Clear();
         }
         byte[] data = Encoding.ASCII.GetBytes(command);
+        if (inlineReceive)
+        {
+            // Keep the sending socket open so replies can return to its ephemeral port.
+            while (receiver.Available > 0)
+            {
+                IPEndPoint senderEndpoint = new IPEndPoint(IPAddress.Any, 0);
+                receiver.Receive(ref senderEndpoint);
+            }
+            receiver.Send(data, data.Length, destination);
+            return;
+        }
         using (var sender = new UdpClient(AddressFamily.InterNetwork))
             sender.Send(data, data.Length, destination);
     }
 
     public List<string> GetUdpResponse(double timeoutSeconds)
     {
+        if (inlineReceive)
+            return ReceiveInline(timeoutSeconds);
         var elapsed = Stopwatch.StartNew();
         lock (sync)
         {
@@ -177,6 +195,44 @@ public sealed class ActiveDriverUdp : IDisposable
         }
     }
 
+    private List<string> ReceiveInline(double timeoutSeconds)
+    {
+        lock (sync)
+        {
+            if (closed)
+                throw new InvalidOperationException("UDP receiver is closed", receiveError);
+        }
+        var result = new List<string>();
+        if (timeoutSeconds <= 0 && receiver.Available == 0)
+            return result;
+        receiver.Client.ReceiveTimeout = (int)Math.Min(int.MaxValue,
+            Math.Max(1, Math.Ceiling(timeoutSeconds * 1000)));
+        try
+        {
+            do
+            {
+                IPEndPoint sender = new IPEndPoint(IPAddress.Any, 0);
+                byte[] data = receiver.Receive(ref sender);
+                result.Add(Encoding.UTF8.GetString(data).TrimEnd('\0'));
+            }
+            while (receiver.Available > 0);
+            return result;
+        }
+        catch (SocketException exception) when (exception.SocketErrorCode == SocketError.TimedOut)
+        {
+            return result;
+        }
+        catch (Exception exception)
+        {
+            lock (sync)
+            {
+                receiveError = exception;
+                closed = true;
+            }
+            throw new InvalidOperationException("UDP receiver is closed", exception);
+        }
+    }
+
     public void Dispose()
     {
         lock (sync)
@@ -186,6 +242,7 @@ public sealed class ActiveDriverUdp : IDisposable
             Monitor.PulseAll(sync);
         }
         receiver.Close();
-        listener.Join();
+        if (listener != null)
+            listener.Join();
     }
 }

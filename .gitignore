@@ -3,3 +3,5 @@
 /__pycache__/
 /python/__pycache__/
 
+/cs/.vs/
+/cs/.vs/*

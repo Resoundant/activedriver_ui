@@ -27,6 +27,7 @@ internal static class Program
                     Console.WriteLine("Usage: ad_cli <command> [--ad-ip IP] [--ad-port PORT] [--host-ip IP] [--host-port PORT] [--timeout SECONDS]");
                     Console.WriteLine("Defaults: --ad-ip 10.0.1.30 --ad-port 2000 --host-port 2000 --timeout 0.2");
                     Console.WriteLine("The local IPv4 address is detected from the device subnet unless --host-ip is supplied.");
+                    Console.WriteLine("Use --host-port 0 to receive inline on the sending socket's OS-assigned port, without a listener thread.");
                     Console.WriteLine("Example: ad_cli '?V' --ad-ip 192.168.6.2");
                     return 0;
                 }
@@ -105,8 +106,9 @@ internal static class Program
     private static int ParsePort(string value, string option)
     {
         int port;
-        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out port) || port < 1 || port > 65535)
-            throw new ArgumentException(option + " must be between 1 and 65535");
+        int minimum = option == "--host-port" ? 0 : 1;
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out port) || port < minimum || port > 65535)
+            throw new ArgumentException(option + " must be between " + minimum + " and 65535");
         return port;
     }
 
