@@ -75,7 +75,21 @@ that source port. `GetUdpResponse()` receives synchronously on the calling
 thread, waiting up to the timeout for a packet and returning it along with any
 other immediately available packets. No background listener is started.
 Call `Send()` followed by `GetUdpResponse()` sequentially in this mode.
-For example: `.\ad_cli.exe '?V' --host-port 0`.
+
+
+Changing the Active Driver UDP Ouptput Port
+
+
+```powershell
+# Set the reply port to 0; response may fail depending on current output port
+.\ad_cli.exe --host-port 0 '+u0'
+
+# Factory default IP 10.0.1.30, port 2000
+.\ad_cli.exe --host-port 0 '?u' 
+
+# expect response 0
+
+```
 
 Exit codes are `0` for normal completion, `2` for argument errors, and `1` for
 other failures. Errors are written to standard error. A timeout after sending
